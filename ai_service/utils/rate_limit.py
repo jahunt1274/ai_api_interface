@@ -47,11 +47,15 @@ class TokenBucket:
     def __post_init__(self) -> None:
         """Initialize the token bucket with full capacity."""
         self.tokens = self.capacity
+        self.last_refill = time.time()
     
     def _refill(self) -> None:
         """Refill the bucket based on elapsed time."""
         now = time.time()
-        elapsed = now - self.last_refill
+        # elapsed = now - self.last_refill
+        
+        # Prevent negative elapsed time
+        elapsed = max(0, now - self.last_refill)
         
         # Calculate how many tokens to add based on elapsed time
         new_tokens = elapsed * self.refill_rate

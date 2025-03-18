@@ -146,6 +146,7 @@ class TestWithRetry:
             AIServiceError("service error"),
             "success"
         ])
+        mock_func.__name__ = "mock_func"
         
         # Create a strategy with no delay for faster testing
         strategy = RetryStrategy(base_delay=0.01, max_delay=0.01, jitter=0)
@@ -175,6 +176,7 @@ class TestWithRetry:
         """Test that the function stops retrying after max_attempts."""
         # Create a function that always fails with a retryable error
         mock_func = MagicMock(side_effect=RateLimitError("rate limited"))
+        mock_func.__name__ = "mock_func"
         
         # Create a strategy with 2 max attempts and no delay for faster testing
         strategy = RetryStrategy(max_attempts=2, base_delay=0.01, jitter=0)
@@ -191,6 +193,7 @@ class TestWithRetry:
         """Test that retry uses exponential backoff."""
         # Create a function that always fails with a retryable error
         mock_func = MagicMock(side_effect=RateLimitError("rate limited"))
+        mock_func.__name__ = "mock_func"
         
         # Create a strategy with specific parameters and no jitter
         strategy = RetryStrategy(

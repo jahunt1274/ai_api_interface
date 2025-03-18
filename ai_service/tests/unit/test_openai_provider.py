@@ -9,11 +9,11 @@ from unittest.mock import MagicMock, patch
 
 from ai_service.core.errors import (
     AIServiceError,
-    AuthenticationError,
+    AuthenticationError as AIAuthenticationError,
     InvalidRequestError,
     ModelNotAvailableError,
     ProviderError,
-    RateLimitError,
+    RateLimitError as AIRateLimitError,
 )
 from ai_service.core.models import (
     ChatCompletionRequest,
@@ -62,9 +62,15 @@ class TestOpenAIProvider:
 
     def test_create_completion(self, provider, mock_openai_client):
         """Test creating a completion."""
+        # Mock the message to the API
+        mock_message = MagicMock()
+        mock_message.content = "test response"
+        mock_message.role = "assistant"
+        mock_message.name = None
+        
         # Mock the API response
         mock_response = MagicMock()
-        mock_response.choices = [MagicMock(message=MagicMock(content="test response", role="assistant"))]
+        mock_response.choices = [MagicMock(message=mock_message)]
         mock_response.usage.prompt_tokens = 10
         mock_response.usage.completion_tokens = 5
         mock_response.usage.total_tokens = 15
@@ -99,9 +105,15 @@ class TestOpenAIProvider:
 
     def test_create_chat_completion(self, provider, mock_openai_client):
         """Test creating a chat completion."""
+        # Mock the message to the API
+        mock_message = MagicMock()
+        mock_message.content = "test response"
+        mock_message.role = "assistant"
+        mock_message.name = None
+        
         # Mock the API response
         mock_response = MagicMock()
-        mock_response.choices = [MagicMock(message=MagicMock(content="test response", role="assistant"))]
+        mock_response.choices = [MagicMock(message=mock_message)]
         mock_response.usage.prompt_tokens = 10
         mock_response.usage.completion_tokens = 5
         mock_response.usage.total_tokens = 15
@@ -205,30 +217,70 @@ class TestOpenAIProvider:
         count = provider.get_token_count("This is a test.", model="gpt-3.5-turbo")
         assert count > 0
 
+class TestOpenAIErrorHandling:
+    """Tests for error handling in the OpenAI provider."""
     @pytest.mark.parametrize(
-        "error_class,expected_error",
+        "openai_error_class,expected_error_class,needs_response",
         [
-            (MagicMock(__name__="openai.AuthenticationError"), AuthenticationError),
-            (MagicMock(__name__="openai.RateLimitError"), RateLimitError),
-            (MagicMock(__name__="openai.BadRequestError"), InvalidRequestError),
-            (MagicMock(__name__="openai.APIError"), ProviderError),
-            (Exception, AIServiceError),
+            ("AuthenticationError", AIAuthenticationError, True),
+            ("RateLimitError", AIRateLimitError, True),
+            ("BadRequestError", InvalidRequestError, True),
+            ("APIError", ProviderError, False),
         ],
     )
-    def test_error_handling(self, provider, mock_openai_client, error_class, expected_error):
-        """Test that API errors are converted to appropriate AI service errors."""
-        # Configure the mock to raise an error
-        mock_openai_client.chat.completions.create.side_effect = error_class("test error")
+    def test_error_conversions(self, provider, openai_error_class, expected_error_class, needs_response):
+        """Test all error conversion cases."""
+        from ai_service.providers.openai import openai as provider_openai
         
-        # Create a request
-        request = CompletionRequest(prompt="test prompt")
+        # Get the actual exception class from the provider's openai module
+        error_class = getattr(provider_openai, openai_error_class)
+        mock_body = {"error": {"message": "test error", "type": "invalid_request_error"}}
+
+        # Create a mock that raises this specific error with all required arguments
+        def mock_chat_completion(*args, **kwargs):
+            if needs_response:
+                # Create mock response and body objects as required by OpenAI exceptions
+                mock_response = MagicMock()
+                mock_response.status_code = 401  # Use appropriate status code for each error
+                mock_response.headers = {}
+                mock_response.text = "Error text"
+                
+                raise error_class(
+                    message="test error",
+                    response=mock_response,
+                    body=mock_body
+                )
+            else:
+                # For APIError, use a simpler constructor
+                raise error_class(
+                    message="test error",
+                    request="test",
+                    body=mock_body
+                )
         
-        # Call the provider and check the error
-        with pytest.raises(expected_error) as exc_info:
-            provider.create_completion(request)
+        # Patch and test
+        with patch.object(provider, 'create_chat_completion', side_effect=mock_chat_completion):
+            request = CompletionRequest(prompt="test prompt", model="gpt-3.5-turbo")
+            
+            with pytest.raises(expected_error_class) as exc_info:
+                provider.create_completion(request)
+            
+            assert "test error" in str(exc_info.value)
+    
+    def test_generic_error(self, provider):
+        """Test handling of generic exceptions not specific to OpenAI."""
         
-        # Check error details
-        assert "test error" in str(exc_info.value)
-        assert provider.PROVIDER_NAME in str(exc_info.value) or hasattr(exc_info.value, "provider")
-        if hasattr(exc_info.value, "provider"):
-            assert exc_info.value.provider == provider.PROVIDER_NAME
+        def mock_chat_completion(*args, **kwargs):
+            # Raise a generic exception that isn't an OpenAI-specific type
+            raise ValueError("some unexpected error")
+        
+        with patch.object(provider, 'create_chat_completion', side_effect=mock_chat_completion):
+            request = CompletionRequest(prompt="test prompt", model="gpt-3.5-turbo")
+            
+            with pytest.raises(AIServiceError) as exc_info:
+                provider.create_completion(request)
+            
+            # Check that the error message is wrapped in our expected format
+            assert "Unexpected error: some unexpected error" in str(exc_info.value)
+            assert provider.PROVIDER_NAME == exc_info.value.provider
+            assert "original_error" in exc_info.value.details

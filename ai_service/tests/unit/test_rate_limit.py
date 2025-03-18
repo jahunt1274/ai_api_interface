@@ -214,27 +214,34 @@ class TestRateLimiter:
         
         # Check that we got a retry_after in the error
         assert exc_info.value.retry_after >= 5  # Should be roughly 6 seconds, but allow some margin
-
+    
     def test_global_and_model_buckets(self):
         """Test that both global and model-specific buckets are checked."""
-        limiter = RateLimiter(default_capacity=10.0, default_refill_rate=1.0)
-        
-        # Add a model-specific bucket with higher capacity
-        limiter.add_model_limit("gpt-4", 20.0, 1.0)
-        
-        # Acquire 8 tokens from global bucket
-        assert limiter.try_acquire(tokens=8.0) is True
-        
-        # Try to acquire 5 tokens for gpt-4
-        # This should fail because the global bucket only has 2 tokens left
-        assert limiter.try_acquire(model="gpt-4", tokens=5.0) is False
-        
-        # Try to acquire 1 token for gpt-4, which should work
-        assert limiter.try_acquire(model="gpt-4", tokens=1.0) is True
-        
-        # Try to acquire 1 more token, which should fail (global bucket is empty)
-        assert limiter.try_acquire(model="gpt-4", tokens=1.0) is False
+        # Mock time.time() to return a consistent value
+        with patch('time.time', return_value=1000.0):  # Fixed time for all calls
+            limiter = RateLimiter(default_capacity=10.0, default_refill_rate=1.0)
 
+            # Explicitly set last_refill to match our mocked time
+            limiter.global_bucket.last_refill = 1000.0
+            
+            # Add a model-specific bucket with higher capacity
+            limiter.add_model_limit("gpt-4", 20.0, 1.0)
+            limiter.model_buckets["gpt-4"].last_refill = 1000.0
+            
+            # Acquire 8 tokens from global bucket
+            assert limiter.try_acquire(tokens=8.0) is True
+
+            print(f"After acquiring 8 tokens, global tokens: {limiter.global_bucket.tokens}")
+
+            # Try to acquire 5 tokens for gpt-4
+            # This should fail because the global bucket only has 2 tokens left
+            assert limiter.try_acquire(model="gpt-4", tokens=5.0) is False
+            
+            # Try to acquire 2 tokens for gpt-4, which should empty the bucket
+            assert limiter.try_acquire(model="gpt-4", tokens=2.0) is True
+
+            # Try to acquire 1 more token, which should fail (global bucket is empty)
+            assert limiter.try_acquire(model="gpt-4", tokens=1.0) is False
 
 class TestWithRateLimit:
     """Tests for the with_rate_limit decorator."""

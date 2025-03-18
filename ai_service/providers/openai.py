@@ -75,13 +75,18 @@ class OpenAIProvider(BaseProvider):
         )
         self.timeout = timeout
         self.organization = organization
+
+        # Filter out ai_service specific parameters that the OpenAI client doesn't need
+        openai_kwargs = {k: v for k, v in kwargs.items() 
+                         if k not in ['rate_limiter', 'retry_strategy']}
         
         # Initialize the OpenAI client
         self.client = OpenAI(
             api_key=self.api_key,
             organization=self.organization,
             timeout=self.timeout,
-            **kwargs,
+            # **kwargs,
+            **openai_kwargs,
         )
         
         # Cache for available models
